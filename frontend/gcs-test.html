@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>Cloud Storage 업로드 속도 테스트</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="page">
+    <section class="card">
+      <header>
+        <p class="eyebrow">영산강권역 소규모감시망</p>
+        <h1>Cloud Storage 속도 테스트</h1>
+        <p class="desc">선택한 사진을 Google Cloud Storage로 직접 업로드하고 총 시간과 처리량을 측정합니다.</p>
+      </header>
+
+      <label class="field">
+        <span>업로드 코드</span>
+        <input id="uploadCode" type="password" inputmode="numeric" autocomplete="off" placeholder="현재 업로드 코드" />
+      </label>
+
+      <label class="field">
+        <span>동시 업로드 수</span>
+        <select id="concurrency">
+          <option value="1">1장</option>
+          <option value="3" selected>3장</option>
+          <option value="5">5장</option>
+          <option value="8">8장</option>
+        </select>
+      </label>
+
+      <div class="picker">
+        <input id="photos" type="file" accept="image/*,.heic,.heif" multiple hidden />
+        <button id="pickBtn" class="secondary" type="button">사진 선택</button>
+        <div><strong id="fileCount">0장</strong><span id="fileSize"> 선택됨</span></div>
+      </div>
+
+      <button id="testBtn" class="primary" type="button" disabled>속도 테스트 시작</button>
+
+      <section id="progressBox" class="progress-box hidden" aria-live="polite">
+        <div class="progress-head"><span id="progressText">대기</span><span id="progressPercent">0%</span></div>
+        <progress id="progress" value="0" max="100"></progress>
+      </section>
+
+      <section id="result" class="result hidden"></section>
+    </section>
+  </main>
+  <script src="config.js"></script>
+  <script src="gcs-test.js"></script>
+</body>
+</html>
