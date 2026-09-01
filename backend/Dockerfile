@@ -6,4 +6,4 @@ COPY src ./src
 COPY config ./config
 ENV NODE_ENV=production PORT=8080
 EXPOSE 8080
-CMD ["node", "src/server.js"]
+CMD ["node", "src/async-server.js"]
