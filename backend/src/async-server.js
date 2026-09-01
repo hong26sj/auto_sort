@@ -11,6 +11,7 @@ import { safeUnlink } from './image.js';
 import { ensureInboxFolder, uploadToDrive } from './drive.js';
 import { enqueuePhotoClassification } from './tasks.js';
 import { classifyDrivePhoto } from './processor.js';
+import { createSpeedTestUploadUrl } from './gcs-test.js';
 
 const app = express();
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || '').split(',').map(v => v.trim()).filter(Boolean);
@@ -69,7 +70,18 @@ app.get('/api/config', (req, res) => res.json({
   asyncClassification: true
 }));
 
-// Starts the clock before multer receives/writes the multipart body.
+app.post('/api/gcs-test-url', requireUploadCode, async (req, res) => {
+  try {
+    const originalName = String(req.body?.originalName || 'photo');
+    const contentType = String(req.body?.contentType || 'application/octet-stream');
+    const signed = await createSpeedTestUploadUrl({ originalName, contentType });
+    res.json({ ok: true, ...signed });
+  } catch (error) {
+    console.error('gcs test url failed', error);
+    res.status(500).json({ error: 'GCS_TEST_URL_FAILED', message: error.message });
+  }
+});
+
 app.use('/api/upload', (req, res, next) => {
   req.uploadRequestStartedAt = performance.now();
   next();
