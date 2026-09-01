@@ -40,10 +40,18 @@ export async function findOrCreateFolder(name, parentId) {
   return created.data.id;
 }
 
-export async function ensurePhotoFolder(siteName, dateFolder) {
+function rootFolderId() {
   const rootId = process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID;
   if (!rootId) throw new Error('GOOGLE_DRIVE_ROOT_FOLDER_ID is not configured.');
-  const siteFolderId = await findOrCreateFolder(siteName, rootId);
+  return rootId;
+}
+
+export async function ensureInboxFolder() {
+  return findOrCreateFolder('00_INBOX', rootFolderId());
+}
+
+export async function ensurePhotoFolder(siteName, dateFolder) {
+  const siteFolderId = await findOrCreateFolder(siteName, rootFolderId());
   return findOrCreateFolder(dateFolder, siteFolderId);
 }
 
@@ -56,7 +64,56 @@ export async function uploadToDrive({ filePath, filename, mimeType, parentId, ap
       appProperties
     },
     media: { mimeType: mimeType || 'application/octet-stream', body: fs.createReadStream(filePath) },
-    fields: 'id,name,size,webViewLink'
+    fields: 'id,name,size,webViewLink,parents,appProperties,mimeType'
   });
   return response.data;
+}
+
+export async function getDriveFile(fileId) {
+  const drive = driveClient();
+  const response = await drive.files.get({
+    fileId,
+    fields: 'id,name,mimeType,size,parents,appProperties,trashed,webViewLink'
+  });
+  return response.data;
+}
+
+export async function downloadDriveFile(fileId, destinationPath) {
+  const drive = driveClient();
+  const response = await drive.files.get(
+    { fileId, alt: 'media' },
+    { responseType: 'stream' }
+  );
+  await new Promise((resolve, reject) => {
+    const out = fs.createWriteStream(destinationPath);
+    response.data.on('error', reject);
+    out.on('error', reject);
+    out.on('finish', resolve);
+    response.data.pipe(out);
+  });
+  return destinationPath;
+}
+
+export async function moveDriveFile({ fileId, parentId, filename, appProperties = {} }) {
+  const drive = driveClient();
+  const current = await getDriveFile(fileId);
+  const removeParents = (current.parents || []).join(',');
+  const mergedProperties = { ...(current.appProperties || {}), ...appProperties };
+
+  const response = await drive.files.update({
+    fileId,
+    addParents: parentId,
+    removeParents: removeParents || undefined,
+    requestBody: {
+      ...(filename ? { name: filename } : {}),
+      appProperties: mergedProperties
+    },
+    fields: 'id,name,size,webViewLink,parents,appProperties'
+  });
+  return response.data;
+}
+
+export async function trashDriveFile(fileId) {
+  const drive = driveClient();
+  await drive.files.update({ fileId, requestBody: { trashed: true } });
 }
