@@ -1,13 +1,13 @@
 import { google } from 'googleapis';
 
 function getTaskConfig() {
-  const projectId = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT;
+  const projectId = process.env.TASK_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT;
   const location = process.env.TASK_LOCATION || 'asia-northeast3';
   const queue = process.env.TASK_QUEUE || 'photo-classification';
   const targetBaseUrl = (process.env.TASK_TARGET_URL || '').replace(/\/$/, '');
   const taskCode = process.env.TASK_CODE || process.env.UPLOAD_CODE || '';
 
-  if (!projectId) throw new Error('GOOGLE_CLOUD_PROJECT is not configured.');
+  if (!projectId) throw new Error('TASK_PROJECT_ID is not configured.');
   if (!targetBaseUrl) throw new Error('TASK_TARGET_URL is not configured.');
   if (!taskCode) throw new Error('TASK_CODE or UPLOAD_CODE is not configured.');
   return { projectId, location, queue, targetBaseUrl, taskCode };
