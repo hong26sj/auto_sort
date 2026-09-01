@@ -1,0 +1,24 @@
+name: Deploy backend to Cloud Run
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - run: gcloud builds submit backend --tag "${{ secrets.GCP_IMAGE }}"
+      - run: >-
+          gcloud run deploy site-photo-uploader
+          --image "${{ secrets.GCP_IMAGE }}"
+          --region asia-northeast3
+          --platform managed
+          --allow-unauthenticated
+          --min 0 --max 3 --concurrency 4 --memory 1Gi --cpu 1 --timeout 300
