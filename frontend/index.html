@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#ffffff" />
+  <title>현장 시공사진 업로드</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="page">
+    <section class="card">
+      <header>
+        <p class="eyebrow" id="projectName">영산강권역 소규모감시망</p>
+        <h1>현장 시공사진 업로드</h1>
+        <p class="desc">사진을 선택하면 서버에서 촬영 위치와 날짜를 확인해 Google Drive에 자동 분류합니다.</p>
+      </header>
+
+      <label class="field">
+        <span>업로드 코드</span>
+        <input id="uploadCode" type="password" inputmode="numeric" autocomplete="off" placeholder="관리자에게 받은 코드" />
+      </label>
+
+      <div class="picker">
+        <input id="photos" type="file" accept="image/*,.heic,.heif" multiple hidden />
+        <button id="pickBtn" class="secondary" type="button">사진 선택</button>
+        <div><strong id="fileCount">0장</strong><span id="fileSize"> 선택됨</span></div>
+      </div>
+
+      <button id="uploadBtn" class="primary" type="button" disabled>업로드</button>
+
+      <section id="progressBox" class="progress-box hidden" aria-live="polite">
+        <div class="progress-head"><span id="progressText">업로드 준비</span><span id="progressPercent">0%</span></div>
+        <progress id="progress" value="0" max="100"></progress>
+      </section>
+
+      <section id="result" class="result hidden"></section>
+    </section>
+  </main>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
