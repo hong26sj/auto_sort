@@ -99,7 +99,8 @@ export async function classifyGcsPhoto({ bucketName, objectName, originalName, c
     const analyzed = await analyzeLocalPhoto({ localPath, originalName: cleanName, traceId });
     processed = analyzed.processed;
     const sourcePath = processed.processed ? processed.path : localPath;
-    const targetName = finalName(analyzed.meta, processed.filename || cleanName, objectName);
+    const objectId = crypto.createHash('sha256').update(objectName).digest('hex').slice(0, 8);
+    const targetName = finalName(analyzed.meta, processed.filename || cleanName, objectId);
     const props = driveProps({
       originalName: cleanName,
       siteName: analyzed.siteName,
