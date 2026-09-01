@@ -1,4 +1,4 @@
-import { parse } from 'exifr';
+import exifr from 'exifr';
 
 function parseDate(value) {
   if (!value) return null;
@@ -7,7 +7,7 @@ function parseDate(value) {
 }
 
 export async function readPhotoMetadata(filePath) {
-  const data = await parse(filePath, {
+  const data = await exifr.parse(filePath, {
     gps: true,
     tiff: true,
     exif: true,
