@@ -1,0 +1,17 @@
+{
+  "projectId": "yeongsan-small-monitoring-network",
+  "projectName": "영산강권역 소규모감시망",
+  "radiusMeters": 300,
+  "sites": [
+    {"id":"naju-jiseok-jiseokgyo","name":"나주 지석천 지석교","address":"전남광주 나주시 남평읍 남석리 733-9","latitude":35.02011944,"longitude":126.85586389},
+    {"id":"gokseong-moksadong-sullaenggyo","name":"곡성 목사동천 술랭교","address":"전남광주 곡성군 목사동면 평리 289","latitude":35.11748333,"longitude":127.30151944},
+    {"id":"gwangju-yeongsangang-deokheungbo","name":"광주 영산강 덕흥보","address":"전남광주 서구 덕흥동 980-4","latitude":35.16886111,"longitude":126.83208333},
+    {"id":"gwangju-gwangjucheon-chipyeonggyo","name":"광주 광주천 치평교","address":"전남광주 서구 치평동 758-1","latitude":35.15224722,"longitude":126.83261111},
+    {"id":"jangseong-donghwacheon-donghwa1bo","name":"장성 동화천 동화1보","address":"전남광주 장성군 황룡면 황룡리 산 1-2","latitude":35.26834444,"longitude":126.74366944},
+    {"id":"hampyeong-gomakwoncheon-sajeonggyo","name":"함평 고막원천 사정교","address":"전남광주 함평군 나산면 이문리 880-5","latitude":35.14174167,"longitude":126.61675},
+    {"id":"boseong-boseonggang-songrimgyo","name":"보성 보성강 송림교","address":"전남광주 보성군 미력면 도개리 903-9","latitude":34.80114722,"longitude":127.08953611},
+    {"id":"hwasun-hwasuncheon-jigokgyo","name":"화순 화순천 지곡교","address":"전남광주 화순군 화순읍 다지리 산 12-11","latitude":35.04305556,"longitude":127.00346389},
+    {"id":"naju-songhakcheon-ogyegyo","name":"나주 송학천 오계교","address":"전남광주 나주시 남평읍 오계리 387-5","latitude":34.999775,"longitude":126.86518889},
+    {"id":"gwangju-gwangjucheon-namgwanggyo","name":"광주 광주천 남광교","address":"전남광주통합특별시 동구 천변우로 501","latitude":35.13806389,"longitude":126.92055}
+  ]
+}
