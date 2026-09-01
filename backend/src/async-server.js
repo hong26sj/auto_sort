@@ -2,6 +2,7 @@ import 'dotenv/config';
 import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
+import { performance } from 'node:perf_hooks';
 import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
@@ -22,6 +23,11 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'X-Upload-Code', 'X-Task-Code']
 }));
 app.use(express.json({ limit: '1mb' }));
+
+function ms(start) { return Math.round((performance.now() - start) * 10) / 10; }
+function timing(event, fields = {}) {
+  console.log(JSON.stringify({ type: 'PHOTO_TIMING', event, ...fields }));
+}
 
 const upload = multer({
   dest: os.tmpdir(),
@@ -63,16 +69,37 @@ app.get('/api/config', (req, res) => res.json({
   asyncClassification: true
 }));
 
+// Starts the clock before multer receives/writes the multipart body.
+app.use('/api/upload', (req, res, next) => {
+  req.uploadRequestStartedAt = performance.now();
+  next();
+});
+
 app.post('/api/upload', requireUploadCode, upload.array('photos'), async (req, res) => {
   const files = req.files || [];
+  const requestTraceId = crypto.randomBytes(6).toString('hex');
+  timing('REQUEST_BODY_RECEIVED', {
+    traceId: requestTraceId,
+    elapsedMs: ms(req.uploadRequestStartedAt),
+    fileCount: files.length,
+    totalBytes: files.reduce((sum, f) => sum + (f.size || 0), 0)
+  });
+
   if (!files.length) return res.status(400).json({ error: 'NO_FILES' });
+
+  const inboxStart = performance.now();
   const inboxId = await ensureInboxFolder();
+  timing('INBOX_READY', { traceId: requestTraceId, elapsedMs: ms(inboxStart) });
   const results = [];
 
   for (const file of files) {
+    const traceId = `${requestTraceId}-${crypto.randomBytes(2).toString('hex')}`;
+    const fileStart = performance.now();
     try {
       const originalName = safeName(file.originalname);
       const inboxName = `${Date.now()}_${crypto.randomBytes(4).toString('hex')}_${originalName}`;
+
+      const driveStart = performance.now();
       const saved = await uploadToDrive({
         filePath: file.path,
         filename: inboxName,
@@ -80,28 +107,51 @@ app.post('/api/upload', requireUploadCode, upload.array('photos'), async (req, r
         parentId: inboxId,
         appProperties: { originalName: originalName.slice(0, 120), uploadState: 'INBOX', classificationDone: 'false' }
       });
-      await enqueuePhotoClassification({ driveFileId: saved.id });
-      results.push({ originalName: file.originalname, success: true, uploaded: true, queued: true, driveFileId: saved.id });
+      timing('DRIVE_INBOX_UPLOAD', {
+        traceId,
+        originalName,
+        bytes: file.size || 0,
+        elapsedMs: ms(driveStart)
+      });
+
+      const taskStart = performance.now();
+      await enqueuePhotoClassification({ driveFileId: saved.id, traceId });
+      timing('TASK_ENQUEUE', { traceId, elapsedMs: ms(taskStart) });
+      timing('UPLOAD_FILE_DONE', { traceId, originalName, elapsedMs: ms(fileStart) });
+
+      results.push({ originalName: file.originalname, success: true, uploaded: true, queued: true, driveFileId: saved.id, traceId });
     } catch (error) {
       console.error('upload failed', file.originalname, error);
-      results.push({ originalName: file.originalname, success: false, error: error.message });
+      timing('UPLOAD_FILE_FAILED', { traceId, originalName: file.originalname, elapsedMs: ms(fileStart), error: error.message });
+      results.push({ originalName: file.originalname, success: false, error: error.message, traceId });
     } finally {
       await safeUnlink(file.path);
     }
   }
 
   const failed = results.filter(r => !r.success).length;
+  timing('UPLOAD_REQUEST_DONE', {
+    traceId: requestTraceId,
+    elapsedMs: ms(req.uploadRequestStartedAt),
+    succeeded: files.length - failed,
+    failed
+  });
   res.status(failed === files.length ? 500 : 200).json({ total: files.length, succeeded: files.length - failed, failed, asyncClassification: true, results });
 });
 
 app.post('/api/process-photo', requireTaskCode, async (req, res) => {
   const fileId = String(req.body?.driveFileId || '');
+  const traceId = String(req.body?.traceId || fileId.slice(0, 12) || 'unknown');
   if (!fileId) return res.status(400).json({ error: 'MISSING_DRIVE_FILE_ID' });
+  const start = performance.now();
+  timing('CLASSIFICATION_REQUEST_START', { traceId, driveFileId: fileId });
   try {
-    const result = await classifyDrivePhoto(fileId);
+    const result = await classifyDrivePhoto(fileId, traceId);
+    timing('CLASSIFICATION_REQUEST_DONE', { traceId, elapsedMs: ms(start), ...result });
     res.json({ ok: true, driveFileId: fileId, ...result });
   } catch (error) {
     console.error('classification failed', fileId, error);
+    timing('CLASSIFICATION_REQUEST_FAILED', { traceId, elapsedMs: ms(start), error: error.message });
     res.status(500).json({ error: 'CLASSIFICATION_FAILED', message: error.message });
   }
 });
