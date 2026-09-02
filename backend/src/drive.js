@@ -21,8 +21,13 @@ function qEscape(value) {
   return String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
-export async function findOrCreateFolder(name, parentId) {
-  const drive = driveClient();
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+const folderLocks = new Map();
+
+async function listMatchingFolders(drive, name, parentId) {
   const q = [
     `name = '${qEscape(name)}'`,
     `mimeType = 'application/vnd.google-apps.folder'`,
@@ -30,14 +35,86 @@ export async function findOrCreateFolder(name, parentId) {
     `trashed = false`
   ].join(' and ');
 
-  const found = await drive.files.list({ q, fields: 'files(id,name)', pageSize: 10 });
-  if (found.data.files?.length) return found.data.files[0].id;
+  const found = await drive.files.list({
+    q,
+    fields: 'files(id,name,createdTime)',
+    pageSize: 100,
+    orderBy: 'createdTime'
+  });
+
+  return (found.data.files || []).sort((a, b) => {
+    const at = a.createdTime || '';
+    const bt = b.createdTime || '';
+    if (at !== bt) return at.localeCompare(bt);
+    return String(a.id).localeCompare(String(b.id));
+  });
+}
+
+async function findOrCreateFolderUnlocked(name, parentId) {
+  const drive = driveClient();
+  const existing = await listMatchingFolders(drive, name, parentId);
+  if (existing.length) {
+    if (existing.length > 1) {
+      console.warn(JSON.stringify({
+        type: 'DRIVE_FOLDER_DUPLICATE',
+        name,
+        parentId,
+        canonicalId: existing[0].id,
+        duplicateIds: existing.slice(1).map(f => f.id)
+      }));
+    }
+    return existing[0].id;
+  }
 
   const created = await drive.files.create({
     requestBody: { name, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] },
-    fields: 'id'
+    fields: 'id,name,createdTime'
   });
-  return created.data.id;
+
+  // Cloud Run can process several photos concurrently, and different instances can
+  // simultaneously observe "folder not found" and create the same date folder.
+  // Re-list after creation and deterministically keep the earliest folder.
+  // The newly-created losing folder is still empty at this point, so it is safe to trash.
+  let canonical = created.data;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await sleep(200 * (attempt + 1));
+    const all = await listMatchingFolders(drive, name, parentId);
+    if (all.length) canonical = all[0];
+    if (all.length > 1) {
+      console.warn(JSON.stringify({
+        type: 'DRIVE_FOLDER_RACE_RESOLVED',
+        name,
+        parentId,
+        canonicalId: canonical.id,
+        createdId: created.data.id,
+        duplicateIds: all.slice(1).map(f => f.id)
+      }));
+    }
+    if (canonical.id !== created.data.id) {
+      await drive.files.update({
+        fileId: created.data.id,
+        requestBody: { trashed: true }
+      }).catch(() => {});
+      break;
+    }
+    if (all.length > 1) break;
+  }
+
+  return canonical.id;
+}
+
+export async function findOrCreateFolder(name, parentId) {
+  const key = `${parentId}\u0000${name}`;
+  const previous = folderLocks.get(key) || Promise.resolve();
+  const current = previous
+    .catch(() => {})
+    .then(() => findOrCreateFolderUnlocked(name, parentId));
+  folderLocks.set(key, current);
+  try {
+    return await current;
+  } finally {
+    if (folderLocks.get(key) === current) folderLocks.delete(key);
+  }
 }
 
 function rootFolderId() {
