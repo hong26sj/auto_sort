@@ -15,10 +15,43 @@ document.querySelector('#projectName').textContent = cfg.PROJECT_NAME;
 const MAX_SELECTION = 100;
 const CONCURRENCY = 5;
 
+let wakeLock = null;
+let uploadInProgress = false;
+
 pickBtn.addEventListener('click', () => photos.click());
 photos.addEventListener('change', renderSelection);
 uploadCode.addEventListener('input', updateButton);
 uploadBtn.addEventListener('click', uploadAll);
+document.addEventListener('visibilitychange', handleVisibilityChange);
+
+async function requestWakeLock() {
+  if (!('wakeLock' in navigator) || document.visibilityState !== 'visible' || wakeLock) return;
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+    wakeLock.addEventListener('release', () => {
+      wakeLock = null;
+    }, { once: true });
+  } catch (e) {
+    console.warn('Screen Wake Lock request failed:', e);
+  }
+}
+
+async function releaseWakeLock() {
+  if (!wakeLock) return;
+  const current = wakeLock;
+  wakeLock = null;
+  try {
+    await current.release();
+  } catch (e) {
+    console.warn('Screen Wake Lock release failed:', e);
+  }
+}
+
+function handleVisibilityChange() {
+  if (uploadInProgress && document.visibilityState === 'visible') {
+    requestWakeLock();
+  }
+}
 
 function renderSelection() {
   const files = [...photos.files];
@@ -91,6 +124,9 @@ async function uploadAll() {
   const files = [...photos.files];
   if (!files.length || files.length > MAX_SELECTION) return;
 
+  uploadInProgress = true;
+  requestWakeLock();
+
   uploadBtn.disabled = true;
   pickBtn.disabled = true;
   progressBox.classList.remove('hidden');
@@ -99,70 +135,73 @@ async function uploadAll() {
   progressPercent.textContent = '0%';
   progressText.textContent = `업로드 준비 중 · 0 / ${files.length}`;
 
-  let signedItems;
   try {
-    signedItems = await requestUploadUrls(files);
-  } catch (e) {
-    renderResults(files.map(f => ({ originalName: f.name, success: false, error: e.message })));
+    let signedItems;
+    try {
+      signedItems = await requestUploadUrls(files);
+    } catch (e) {
+      renderResults(files.map(f => ({ originalName: f.name, success: false, error: e.message })));
+      return;
+    }
+
+    let next = 0;
+    let completed = 0;
+    const putResults = new Array(files.length);
+
+    async function worker() {
+      while (true) {
+        const index = next++;
+        if (index >= files.length) return;
+        try {
+          const signed = signedItems[index];
+          await putToGcs(files[index], signed);
+          putResults[index] = { ...signed, originalName: files[index].name, success: true };
+        } catch (e) {
+          putResults[index] = { originalName: files[index].name, success: false, error: e.message };
+        }
+        completed += 1;
+        const pct = Math.round(completed / files.length * 100);
+        progress.value = pct;
+        progressPercent.textContent = `${pct}%`;
+        progressText.textContent = `${completed} / ${files.length} GCS 업로드 완료`;
+      }
+    }
+
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, files.length) }, () => worker()));
+
+    const uploaded = putResults.filter(x => x?.success).map(x => ({
+      bucketName: x.bucketName,
+      objectName: x.objectName,
+      originalName: x.originalName,
+      contentType: x.contentType,
+      traceId: x.traceId
+    }));
+
+    let queueResults = [];
+    if (uploaded.length) {
+      progressText.textContent = `업로드 완료 · 자동 분류 등록 중`;
+      try {
+        queueResults = await notifyUploadComplete(uploaded);
+      } catch (e) {
+        queueResults = uploaded.map(x => ({ originalName: x.originalName, success: false, error: e.message }));
+      }
+    }
+
+    const queueByName = new Map(queueResults.map(x => [x.originalName, x]));
+    const finalResults = putResults.map(x => {
+      if (!x?.success) return x;
+      const queued = queueByName.get(x.originalName);
+      if (!queued?.success) return { originalName: x.originalName, success: false, error: queued?.error || '자동 분류 등록 실패' };
+      return { originalName: x.originalName, success: true, queued: true };
+    });
+
+    renderResults(finalResults);
+  } finally {
+    uploadInProgress = false;
+    await releaseWakeLock();
     uploadBtn.disabled = false;
     pickBtn.disabled = false;
-    return;
   }
-
-  let next = 0;
-  let completed = 0;
-  const putResults = new Array(files.length);
-
-  async function worker() {
-    while (true) {
-      const index = next++;
-      if (index >= files.length) return;
-      try {
-        const signed = signedItems[index];
-        await putToGcs(files[index], signed);
-        putResults[index] = { ...signed, originalName: files[index].name, success: true };
-      } catch (e) {
-        putResults[index] = { originalName: files[index].name, success: false, error: e.message };
-      }
-      completed += 1;
-      const pct = Math.round(completed / files.length * 100);
-      progress.value = pct;
-      progressPercent.textContent = `${pct}%`;
-      progressText.textContent = `${completed} / ${files.length} GCS 업로드 완료`;
-    }
-  }
-
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, files.length) }, () => worker()));
-
-  const uploaded = putResults.filter(x => x?.success).map(x => ({
-    bucketName: x.bucketName,
-    objectName: x.objectName,
-    originalName: x.originalName,
-    contentType: x.contentType,
-    traceId: x.traceId
-  }));
-
-  let queueResults = [];
-  if (uploaded.length) {
-    progressText.textContent = `업로드 완료 · 자동 분류 등록 중`;
-    try {
-      queueResults = await notifyUploadComplete(uploaded);
-    } catch (e) {
-      queueResults = uploaded.map(x => ({ originalName: x.originalName, success: false, error: e.message }));
-    }
-  }
-
-  const queueByName = new Map(queueResults.map(x => [x.originalName, x]));
-  const finalResults = putResults.map(x => {
-    if (!x?.success) return x;
-    const queued = queueByName.get(x.originalName);
-    if (!queued?.success) return { originalName: x.originalName, success: false, error: queued?.error || '자동 분류 등록 실패' };
-    return { originalName: x.originalName, success: true, queued: true };
-  });
-
-  renderResults(finalResults);
-  uploadBtn.disabled = false;
-  pickBtn.disabled = false;
 }
 
 function renderResults(items) {
