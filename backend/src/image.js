@@ -10,8 +10,9 @@ export async function processImage(inputPath, originalName) {
 
   if (mode !== 'jpeg') throw new Error(`Unsupported IMAGE_PROCESSING_MODE: ${mode}`);
 
+  // B profile: long edge max 2560 px, JPEG quality 80.
   const maxEdge = Number(process.env.IMAGE_MAX_EDGE || 2560);
-  const quality = Number(process.env.IMAGE_JPEG_QUALITY || 82);
+  const quality = Number(process.env.IMAGE_JPEG_QUALITY || 80);
   const outputPath = `${inputPath}.processed.jpg`;
   const base = path.parse(originalName).name.replace(/[^a-zA-Z0-9가-힣._-]+/g, '_');
 
