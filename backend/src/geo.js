@@ -23,11 +23,11 @@ export function classifySite(latitude, longitude, sites, radiusMeters) {
   if (!nearest || nearest.distanceMeters > radiusMeters) {
     return {
       classified: false,
-      reason: 'OUTSIDE_RADIUS',
+      reason: 'OUT_OF_RADIUS',
       site: nearest?.site ?? null,
       distanceMeters: nearest?.distanceMeters ?? null
     };
   }
 
-  return { classified: true, reason: 'WITHIN_RADIUS', ...nearest };
+  return { classified: true, reason: 'CLASSIFIED', ...nearest };
 }
