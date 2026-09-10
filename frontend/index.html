@@ -16,6 +16,40 @@
         <p class="desc">사진 업로드가 완료되면 서버가 백그라운드에서 촬영 위치와 날짜를 확인해 Google Drive에 자동 분류합니다. 업로드 완료 후에는 페이지를 닫아도 됩니다.</p>
       </header>
 
+      <section class="location-guide" aria-labelledby="locationGuideTitle">
+        <div class="guide-title-row">
+          <span class="guide-pin" aria-hidden="true">📍</span>
+          <div>
+            <h2 id="locationGuideTitle">촬영 전 위치정보 설정 확인</h2>
+            <p>사진 자동 분류를 위해 촬영 위치(GPS) 정보가 필요합니다.</p>
+          </div>
+        </div>
+
+        <details class="guide-device">
+          <summary>iPhone 설정 확인</summary>
+          <ol>
+            <li><strong>설정</strong> 앱을 엽니다.</li>
+            <li><strong>개인정보 보호 및 보안 → 위치 서비스</strong>로 이동합니다.</li>
+            <li><strong>카메라</strong>를 선택합니다.</li>
+            <li><strong>앱을 사용하는 동안 허용</strong>으로 설정합니다.</li>
+            <li><strong>정확한 위치</strong>를 켜는 것을 권장합니다.</li>
+          </ol>
+        </details>
+
+        <details class="guide-device">
+          <summary>Galaxy 설정 확인</summary>
+          <ol>
+            <li><strong>카메라 앱</strong>을 실행합니다.</li>
+            <li>촬영 화면 <strong>왼쪽 위의 톱니바퀴(⚙️) 설정 아이콘</strong>을 누릅니다.</li>
+            <li>톱니바퀴가 바로 보이지 않는 기종은 촬영 화면의 <strong>네 점(●●●●) 빠른 설정 아이콘</strong>을 누른 뒤 <strong>톱니바퀴(⚙️)</strong>를 선택합니다.</li>
+            <li>카메라 설정 화면을 아래로 내려 <strong>위치 태그</strong>를 찾아 <strong>ON</strong>으로 설정합니다.</li>
+            <li>휴대폰의 <strong>설정 → 위치</strong>도 <strong>사용 중</strong>인지 확인합니다.</li>
+          </ol>
+        </details>
+
+        <p class="guide-warning">※ 위치정보가 없는 사진은 현장 자동 분류가 되지 않을 수 있습니다.</p>
+      </section>
+
       <label class="field">
         <span>업로드 코드</span>
         <input id="uploadCode" type="password" inputmode="numeric" autocomplete="off" placeholder="관리자에게 받은 코드" />
