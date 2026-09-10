@@ -9,6 +9,7 @@ import { enqueuePhotoClassification } from './tasks.js';
 import { classifyGcsPhoto } from './processor.js';
 import { createSpeedTestUploadUrl } from './gcs-test.js';
 import { createPhotoUploadUrl, getUploadBucketName } from './gcs.js';
+import { getAdminStatus } from './admin-status.js';
 
 const app = express();
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || '').split(',').map(v => v.trim()).filter(Boolean);
@@ -18,7 +19,7 @@ app.use(cors({
     cb(new Error('Origin not allowed'));
   },
   methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'X-Upload-Code', 'X-Task-Code']
+  allowedHeaders: ['Content-Type', 'X-Upload-Code', 'X-Task-Code', 'X-Admin-Code']
 }));
 app.use(express.json({ limit: '1mb' }));
 
@@ -48,6 +49,13 @@ function requireTaskCode(req, res, next) {
   next();
 }
 
+function requireAdminCode(req, res, next) {
+  const expected = process.env.ADMIN_CODE;
+  if (!expected) return res.status(503).json({ error: 'ADMIN_NOT_CONFIGURED' });
+  if (!equalToken(req.get('X-Admin-Code'), expected)) return res.status(401).json({ error: 'INVALID_ADMIN_CODE' });
+  next();
+}
+
 function safeName(name) {
   return path.basename(name || 'photo').replace(/[\\/:*?"<>|]+/g, '_');
 }
@@ -71,6 +79,21 @@ app.get('/api/config', (req, res) => res.json({
   maxSelection: Number(process.env.MAX_SELECTION_FILES || 100),
   uploadConcurrency: Number(process.env.UPLOAD_CONCURRENCY || 5)
 }));
+
+app.get('/api/admin/status', requireAdminCode, async (req, res) => {
+  const started = performance.now();
+  try {
+    const status = await getAdminStatus();
+    res.json(status);
+  } catch (error) {
+    failure('ADMIN_STATUS_FAILED', {
+      elapsedMs: ms(started),
+      errorName: error?.name || 'Error',
+      errorMessage: error?.message || String(error)
+    });
+    res.status(500).json({ error: 'ADMIN_STATUS_FAILED', message: error.message });
+  }
+});
 
 app.post('/api/gcs-upload-urls', requireUploadCode, async (req, res) => {
   const started = performance.now();
