@@ -14,6 +14,9 @@ function ms(start) { return Math.round((performance.now() - start) * 10) / 10; }
 function timing(event, fields = {}) {
   console.log(JSON.stringify({ type: 'PHOTO_TIMING', event, ...fields }));
 }
+function failure(event, fields = {}) {
+  console.error(JSON.stringify({ type: 'PHOTO_FAILURE', event, ...fields }));
+}
 
 function dayFolder(date) {
   if (!date) return '촬영일미확인';
@@ -85,46 +88,60 @@ function photoMetadata({ originalName, siteName, classification, meta, traceId, 
 export async function classifyGcsPhoto({ bucketName, objectName, originalName, contentType }, traceId = crypto.randomBytes(6).toString('hex')) {
   let localPath = null;
   let processed = null;
+  let stage = 'START';
+  let cleanName = safeName(originalName || path.basename(objectName));
+  let siteName = null;
+  let date = null;
+  let sourceSha256 = null;
   const totalStart = performance.now();
   try {
+    stage = 'GCS_OBJECT_CHECK';
     const existsStart = performance.now();
     const exists = await gcsObjectExists({ bucketName, objectName });
-    timing('GCS_OBJECT_CHECK', { traceId, elapsedMs: ms(existsStart), exists });
-    if (!exists) return { skipped: 'GCS_OBJECT_NOT_FOUND' };
+    timing('GCS_OBJECT_CHECK', { traceId, elapsedMs: ms(existsStart), exists, bucketName, objectName, originalName: cleanName });
+    if (!exists) {
+      failure('GCS_OBJECT_NOT_FOUND', { traceId, stage, bucketName, objectName, originalName: cleanName, sourcePreserved: false });
+      return { skipped: 'GCS_OBJECT_NOT_FOUND' };
+    }
 
-    const cleanName = safeName(originalName || path.basename(objectName));
     const ext = path.extname(cleanName) || '.img';
     localPath = path.join(os.tmpdir(), `gcs-${crypto.randomBytes(8).toString('hex')}${ext}`);
 
+    stage = 'GCS_DOWNLOAD';
     const downloadStart = performance.now();
     await downloadGcsObject({ bucketName, objectName, destination: localPath });
-    timing('GCS_DOWNLOAD', { traceId, elapsedMs: ms(downloadStart) });
+    timing('GCS_DOWNLOAD', { traceId, elapsedMs: ms(downloadStart), bucketName, objectName, originalName: cleanName });
 
+    stage = 'SOURCE_SHA256';
     const hashStart = performance.now();
-    const sourceSha256 = await sha256File(localPath);
+    sourceSha256 = await sha256File(localPath);
     timing('SOURCE_SHA256', { traceId, elapsedMs: ms(hashStart), sourceSha256: sourceSha256.slice(0, 12) });
 
+    stage = 'EXIF_CLASSIFY_IMAGE';
     const analyzed = await analyzeLocalPhoto({ localPath, originalName: cleanName, traceId });
     processed = analyzed.processed;
+    siteName = analyzed.siteName;
+    date = analyzed.date;
     const sourcePath = processed.processed ? processed.path : localPath;
     const objectId = crypto.createHash('sha256').update(objectName).digest('hex').slice(0, 8);
     const targetName = finalName(analyzed.meta, processed.filename || cleanName, objectId);
     const metadata = photoMetadata({
       originalName: cleanName,
-      siteName: analyzed.siteName,
+      siteName,
       classification: analyzed.classification,
       meta: analyzed.meta,
       traceId,
       sourceSha256
     });
 
+    stage = 'APPS_SCRIPT_DRIVE_UPLOAD';
     const relayStart = performance.now();
     const relayResult = await uploadViaAppsScript({
       filePath: sourcePath,
       filename: targetName,
       mimeType: processed.processed ? processed.mimeType : (contentType || 'application/octet-stream'),
-      siteName: analyzed.siteName,
-      dateFolder: analyzed.date,
+      siteName,
+      dateFolder: date,
       metadata
     });
     timing('APPS_SCRIPT_DRIVE_UPLOAD', {
@@ -133,31 +150,64 @@ export async function classifyGcsPhoto({ bucketName, objectName, originalName, c
       duplicate: Boolean(relayResult.duplicate),
       fileId: relayResult.fileId || null,
       filename: relayResult.filename || targetName,
-      siteName: analyzed.siteName,
-      date: analyzed.date
+      siteName,
+      date,
+      bucketName,
+      objectName,
+      originalName: cleanName
     });
     timing('GCS_TO_DRIVE_UPLOAD', {
       traceId,
       elapsedMs: ms(relayStart),
       transport: 'apps-script',
       duplicate: Boolean(relayResult.duplicate),
-      siteName: analyzed.siteName,
-      originalName: cleanName
+      siteName,
+      originalName: cleanName,
+      bucketName,
+      objectName
     });
 
+    stage = 'GCS_DELETE';
     const deleteStart = performance.now();
     await deleteGcsObject({ bucketName, objectName });
-    timing('GCS_DELETE', { traceId, elapsedMs: ms(deleteStart) });
+    timing('GCS_DELETE', { traceId, elapsedMs: ms(deleteStart), bucketName, objectName, originalName: cleanName });
 
-    timing('CLASSIFICATION_TOTAL', { traceId, elapsedMs: ms(totalStart), siteName: analyzed.siteName, date: analyzed.date, source: 'GCS' });
+    stage = 'DONE';
+    timing('CLASSIFICATION_TOTAL', {
+      traceId,
+      elapsedMs: ms(totalStart),
+      siteName,
+      date,
+      source: 'GCS',
+      duplicate: Boolean(relayResult.duplicate),
+      bucketName,
+      objectName,
+      originalName: cleanName
+    });
     return {
-      siteName: analyzed.siteName,
-      date: analyzed.date,
+      siteName,
+      date,
       source: 'GCS',
       duplicate: Boolean(relayResult.duplicate),
       filename: relayResult.filename || targetName,
       fileId: relayResult.fileId || null
     };
+  } catch (error) {
+    failure('PHOTO_PROCESSING_FAILED', {
+      traceId,
+      failedStage: stage,
+      elapsedMs: ms(totalStart),
+      bucketName,
+      objectName,
+      originalName: cleanName,
+      siteName,
+      date,
+      sourceSha256: sourceSha256 ? sourceSha256.slice(0, 12) : null,
+      sourcePreserved: stage !== 'GCS_DELETE',
+      errorName: error?.name || 'Error',
+      errorMessage: error?.message || String(error)
+    });
+    throw error;
   } finally {
     if (processed?.path && processed.path !== localPath) await safeUnlink(processed.path);
     await safeUnlink(localPath);
