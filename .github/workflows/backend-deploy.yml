@@ -22,3 +22,5 @@ jobs:
           --platform managed
           --allow-unauthenticated
           --min 0 --max 3 --concurrency 4 --memory 1Gi --cpu 1 --timeout 300
+          --update-secrets APPS_SCRIPT_WEB_APP_URL=apps-script-web-app-url:latest,APPS_SCRIPT_RELAY_KEY=apps-script-relay-key:latest
+          --update-env-vars IMAGE_PROCESSING_MODE=jpeg,IMAGE_MAX_EDGE=2560,IMAGE_JPEG_QUALITY=80,APPS_SCRIPT_TIMEOUT_MS=120000,APPS_SCRIPT_MAX_ENCODED_BYTES=41943040
