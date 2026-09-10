@@ -5,7 +5,21 @@ body { margin:0; }
 .card { width:min(560px,100%); background:#fff; border:1px solid #e5e7eb; border-radius:18px; padding:24px; box-shadow:0 10px 32px rgba(0,0,0,.06); }
 h1 { margin:6px 0 10px; font-size:26px; }
 .eyebrow { margin:0; color:#555; font-size:14px; }
-.desc { color:#666; line-height:1.55; margin-bottom:24px; }
+.desc { color:#666; line-height:1.55; margin-bottom:18px; }
+.location-guide { margin:0 0 24px; padding:16px; border:1px solid #dfe3e8; border-radius:14px; background:#fafbfc; }
+.guide-title-row { display:flex; gap:10px; align-items:flex-start; }
+.guide-pin { font-size:20px; line-height:1.25; }
+.location-guide h2 { margin:0 0 4px; font-size:17px; }
+.location-guide p { margin:0; }
+.guide-title-row p { color:#666; font-size:13px; line-height:1.45; }
+.guide-device { margin-top:12px; border-top:1px solid #e7e9ed; padding-top:12px; }
+.guide-device summary { cursor:pointer; font-size:14px; font-weight:700; list-style:none; position:relative; padding-right:22px; }
+.guide-device summary::-webkit-details-marker { display:none; }
+.guide-device summary::after { content:'+'; position:absolute; right:2px; top:-1px; color:#666; font-size:18px; font-weight:500; }
+.guide-device[open] summary::after { content:'−'; }
+.guide-device ol { margin:10px 0 0 20px; padding:0; color:#4b5563; font-size:13px; line-height:1.55; }
+.guide-device li + li { margin-top:5px; }
+.guide-warning { margin-top:12px !important; color:#8a5a00; font-size:12px; line-height:1.45; }
 .field { display:grid; gap:8px; font-size:14px; font-weight:600; }
 input[type=password] { width:100%; border:1px solid #d1d5db; border-radius:10px; padding:13px 14px; font-size:16px; }
 .picker { margin:18px 0; border:1px dashed #b7bdc7; border-radius:14px; padding:20px; display:flex; gap:14px; align-items:center; justify-content:space-between; }
@@ -21,4 +35,4 @@ progress { width:100%; height:12px; }
 .summary { font-weight:700; margin-bottom:12px; }
 .item { padding:10px 0; border-bottom:1px solid #f0f0f0; font-size:14px; line-height:1.45; }
 .ok { color:#16713b; } .fail { color:#b42318; }
-@media (max-width:520px) { .card { padding:20px 16px; border-radius:14px; } .picker { align-items:flex-start; flex-direction:column; } .secondary { width:100%; } }
+@media (max-width:520px) { .card { padding:20px 16px; border-radius:14px; } .picker { align-items:flex-start; flex-direction:column; } .secondary { width:100%; } .location-guide { padding:14px; } }
