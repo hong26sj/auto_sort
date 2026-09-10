@@ -6,7 +6,7 @@ import sitesConfig from '../config/sites.json' with { type: 'json' };
 import { classifySite } from './geo.js';
 import { readPhotoMetadata } from './exif.js';
 import { processImage, safeUnlink } from './image.js';
-import { ensurePhotoFolder, getDriveFile, downloadDriveFile, moveDriveFile, uploadToDrive, trashDriveFile } from './drive.js';
+import { uploadViaAppsScript } from './apps-script-relay.js';
 import { downloadGcsObject, deleteGcsObject, gcsObjectExists } from './gcs.js';
 
 function ms(start) { return Math.round((performance.now() - start) * 10) / 10; }
@@ -54,19 +54,16 @@ async function analyzeLocalPhoto({ localPath, originalName, traceId }) {
     distanceMeters: classification.distanceMeters == null ? null : Math.round(classification.distanceMeters)
   });
 
-  const folderStart = performance.now();
-  const parentId = await ensurePhotoFolder(siteName, date);
-  timing('TARGET_FOLDER_READY', { traceId, elapsedMs: ms(folderStart), siteName, date });
-
   const imageStart = performance.now();
   const processed = await processImage(localPath, originalName);
   timing('IMAGE_PROCESS', { traceId, elapsedMs: ms(imageStart), processed: processed.processed });
 
-  return { meta, classification, siteName, date, parentId, processed };
+  return { meta, classification, siteName, date, processed };
 }
 
-function driveProps({ originalName, siteName, classification, meta }) {
+function photoMetadata({ originalName, siteName, classification, meta, traceId }) {
   return {
+    traceId,
     originalName: originalName.slice(0, 120),
     classifiedSite: siteName.slice(0, 120),
     classificationReason: classification.reason,
@@ -101,77 +98,53 @@ export async function classifyGcsPhoto({ bucketName, objectName, originalName, c
     const sourcePath = processed.processed ? processed.path : localPath;
     const objectId = crypto.createHash('sha256').update(objectName).digest('hex').slice(0, 8);
     const targetName = finalName(analyzed.meta, processed.filename || cleanName, objectId);
-    const props = driveProps({
+    const metadata = photoMetadata({
       originalName: cleanName,
       siteName: analyzed.siteName,
       classification: analyzed.classification,
-      meta: analyzed.meta
+      meta: analyzed.meta,
+      traceId
     });
 
-    const driveStart = performance.now();
-    await uploadToDrive({
+    const relayStart = performance.now();
+    const relayResult = await uploadViaAppsScript({
       filePath: sourcePath,
       filename: targetName,
       mimeType: processed.processed ? processed.mimeType : (contentType || 'application/octet-stream'),
-      parentId: analyzed.parentId,
-      appProperties: props
+      siteName: analyzed.siteName,
+      dateFolder: analyzed.date,
+      metadata
     });
-    timing('GCS_TO_DRIVE_UPLOAD', { traceId, elapsedMs: ms(driveStart) });
+    timing('APPS_SCRIPT_DRIVE_UPLOAD', {
+      traceId,
+      elapsedMs: ms(relayStart),
+      duplicate: Boolean(relayResult.duplicate),
+      fileId: relayResult.fileId || null,
+      siteName: analyzed.siteName,
+      date: analyzed.date
+    });
+    // Preserve the existing event name so current log queries continue to work.
+    timing('GCS_TO_DRIVE_UPLOAD', {
+      traceId,
+      elapsedMs: ms(relayStart),
+      transport: 'apps-script',
+      duplicate: Boolean(relayResult.duplicate),
+      siteName: analyzed.siteName,
+      originalName: cleanName
+    });
 
     const deleteStart = performance.now();
     await deleteGcsObject({ bucketName, objectName });
     timing('GCS_DELETE', { traceId, elapsedMs: ms(deleteStart) });
 
     timing('CLASSIFICATION_TOTAL', { traceId, elapsedMs: ms(totalStart), siteName: analyzed.siteName, date: analyzed.date, source: 'GCS' });
-    return { siteName: analyzed.siteName, date: analyzed.date, source: 'GCS' };
-  } finally {
-    if (processed?.path && processed.path !== localPath) await safeUnlink(processed.path);
-    await safeUnlink(localPath);
-  }
-}
-
-export async function classifyDrivePhoto(fileId, traceId = String(fileId).slice(0, 12)) {
-  let localPath = null;
-  let processed = null;
-  const totalStart = performance.now();
-  try {
-    const infoStart = performance.now();
-    const info = await getDriveFile(fileId);
-    timing('DRIVE_METADATA_READ', { traceId, elapsedMs: ms(infoStart) });
-
-    if (info.trashed) return { skipped: 'TRASHED' };
-    if (info.appProperties?.classificationDone === 'true') return { skipped: 'ALREADY_CLASSIFIED' };
-
-    const originalName = safeName(info.appProperties?.originalName || info.name);
-    const ext = path.extname(originalName) || '.img';
-    localPath = path.join(os.tmpdir(), `photo-${fileId}-${crypto.randomBytes(3).toString('hex')}${ext}`);
-
-    const downloadStart = performance.now();
-    await downloadDriveFile(fileId, localPath);
-    timing('DRIVE_DOWNLOAD', { traceId, elapsedMs: ms(downloadStart) });
-
-    const analyzed = await analyzeLocalPhoto({ localPath, originalName, traceId });
-    processed = analyzed.processed;
-    const targetName = finalName(analyzed.meta, processed.filename || originalName, fileId);
-    const props = driveProps({
-      originalName,
+    return {
       siteName: analyzed.siteName,
-      classification: analyzed.classification,
-      meta: analyzed.meta
-    });
-
-    const finalizeStart = performance.now();
-    if (processed.processed) {
-      await uploadToDrive({ filePath: processed.path, filename: targetName, mimeType: processed.mimeType, parentId: analyzed.parentId, appProperties: props });
-      await trashDriveFile(fileId);
-      timing('DRIVE_FINALIZE_UPLOAD', { traceId, elapsedMs: ms(finalizeStart) });
-    } else {
-      await moveDriveFile({ fileId, parentId: analyzed.parentId, filename: targetName, appProperties: props });
-      timing('DRIVE_MOVE', { traceId, elapsedMs: ms(finalizeStart) });
-    }
-
-    timing('CLASSIFICATION_TOTAL', { traceId, elapsedMs: ms(totalStart), siteName: analyzed.siteName, date: analyzed.date, source: 'DRIVE' });
-    return { siteName: analyzed.siteName, date: analyzed.date, source: 'DRIVE' };
+      date: analyzed.date,
+      source: 'GCS',
+      duplicate: Boolean(relayResult.duplicate),
+      fileId: relayResult.fileId || null
+    };
   } finally {
     if (processed?.path && processed.path !== localPath) await safeUnlink(processed.path);
     await safeUnlink(localPath);
