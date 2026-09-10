@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>사진 업로드 관리자</title>
+  <link rel="stylesheet" href="admin.css" />
+</head>
+<body>
+  <main class="wrap">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">영산강권역 소규모감시망</p>
+        <h1>사진 업로드 관리자</h1>
+        <p class="sub">오늘(KST) 처리 현황을 Cloud Logging 기준으로 집계합니다.</p>
+      </div>
+      <div class="actions">
+        <button id="changeCodeBtn" class="ghost">관리자 코드 변경</button>
+        <button id="refreshBtn">새로고침</button>
+      </div>
+    </header>
+
+    <section id="loginPanel" class="panel login-panel">
+      <h2>관리자 인증</h2>
+      <p>관리자 코드를 입력하세요. 코드는 이 브라우저 탭의 세션에만 보관됩니다.</p>
+      <form id="loginForm">
+        <input id="adminCode" type="password" autocomplete="current-password" placeholder="관리자 코드" required />
+        <button type="submit">확인</button>
+      </form>
+      <p id="loginMessage" class="message"></p>
+    </section>
+
+    <section id="dashboard" class="hidden">
+      <div class="statusline">
+        <span id="generatedAt">-</span>
+        <span id="lastProcessed">마지막 처리: -</span>
+      </div>
+
+      <section class="cards">
+        <article><span>오늘 업로드</span><strong id="uploaded">0</strong></article>
+        <article><span>처리 성공</span><strong id="succeeded">0</strong></article>
+        <article><span>실패</span><strong id="failed">0</strong></article>
+        <article><span>미분류</span><strong id="unclassified">0</strong></article>
+        <article><span>중복</span><strong id="duplicate">0</strong></article>
+        <article><span>촬영일 없음</span><strong id="noCaptureDate">0</strong></article>
+      </section>
+
+      <section class="grid">
+        <article class="panel">
+          <div class="panel-head"><h2>지점별 처리 건수</h2></div>
+          <div id="siteCounts" class="site-list empty">처리 내역 없음</div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head"><h2>최근 오류 10건</h2></div>
+          <div id="errors" class="error-list empty">오류 없음</div>
+        </article>
+      </section>
+    </section>
+  </main>
+
+  <script src="config.js"></script>
+  <script src="admin.js"></script>
+</body>
+</html>
