@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -33,6 +34,11 @@ function finalName(meta, sourceName, uniqueId) {
   return `${stamp}_${String(uniqueId).slice(0, 8)}${(path.extname(sourceName) || '.jpg').toLowerCase()}`;
 }
 
+async function sha256File(filePath) {
+  const bytes = await fs.readFile(filePath);
+  return crypto.createHash('sha256').update(bytes).digest('hex');
+}
+
 async function analyzeLocalPhoto({ localPath, originalName, traceId }) {
   const exifStart = performance.now();
   const meta = await readPhotoMetadata(localPath);
@@ -61,7 +67,7 @@ async function analyzeLocalPhoto({ localPath, originalName, traceId }) {
   return { meta, classification, siteName, date, processed };
 }
 
-function photoMetadata({ originalName, siteName, classification, meta, traceId }) {
+function photoMetadata({ originalName, siteName, classification, meta, traceId, sourceSha256 }) {
   return {
     traceId,
     originalName: originalName.slice(0, 120),
@@ -70,6 +76,7 @@ function photoMetadata({ originalName, siteName, classification, meta, traceId }
     distanceMeters: classification.distanceMeters == null ? '' : String(Math.round(classification.distanceMeters)),
     capturedAt: meta.capturedAt ? meta.capturedAt.toISOString() : '',
     hasGps: String(meta.latitude != null && meta.longitude != null),
+    sourceSha256,
     uploadState: 'CLASSIFIED',
     classificationDone: 'true'
   };
@@ -93,6 +100,10 @@ export async function classifyGcsPhoto({ bucketName, objectName, originalName, c
     await downloadGcsObject({ bucketName, objectName, destination: localPath });
     timing('GCS_DOWNLOAD', { traceId, elapsedMs: ms(downloadStart) });
 
+    const hashStart = performance.now();
+    const sourceSha256 = await sha256File(localPath);
+    timing('SOURCE_SHA256', { traceId, elapsedMs: ms(hashStart), sourceSha256: sourceSha256.slice(0, 12) });
+
     const analyzed = await analyzeLocalPhoto({ localPath, originalName: cleanName, traceId });
     processed = analyzed.processed;
     const sourcePath = processed.processed ? processed.path : localPath;
@@ -103,7 +114,8 @@ export async function classifyGcsPhoto({ bucketName, objectName, originalName, c
       siteName: analyzed.siteName,
       classification: analyzed.classification,
       meta: analyzed.meta,
-      traceId
+      traceId,
+      sourceSha256
     });
 
     const relayStart = performance.now();
@@ -120,10 +132,10 @@ export async function classifyGcsPhoto({ bucketName, objectName, originalName, c
       elapsedMs: ms(relayStart),
       duplicate: Boolean(relayResult.duplicate),
       fileId: relayResult.fileId || null,
+      filename: relayResult.filename || targetName,
       siteName: analyzed.siteName,
       date: analyzed.date
     });
-    // Preserve the existing event name so current log queries continue to work.
     timing('GCS_TO_DRIVE_UPLOAD', {
       traceId,
       elapsedMs: ms(relayStart),
@@ -143,6 +155,7 @@ export async function classifyGcsPhoto({ bucketName, objectName, originalName, c
       date: analyzed.date,
       source: 'GCS',
       duplicate: Boolean(relayResult.duplicate),
+      filename: relayResult.filename || targetName,
       fileId: relayResult.fileId || null
     };
   } finally {
