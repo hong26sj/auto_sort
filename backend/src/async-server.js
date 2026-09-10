@@ -26,6 +26,9 @@ function ms(start) { return Math.round((performance.now() - start) * 10) / 10; }
 function timing(event, fields = {}) {
   console.log(JSON.stringify({ type: 'PHOTO_TIMING', event, ...fields }));
 }
+function failure(event, fields = {}) {
+  console.error(JSON.stringify({ type: 'PHOTO_FAILURE', event, ...fields }));
+}
 
 function equalToken(actual, expected) {
   if (!expected) return true;
@@ -86,7 +89,7 @@ app.post('/api/gcs-upload-urls', requireUploadCode, async (req, res) => {
     timing('GCS_SIGN_BATCH', { fileCount: items.length, elapsedMs: ms(started) });
     res.json({ ok: true, items });
   } catch (error) {
-    console.error('gcs upload urls failed', error);
+    failure('GCS_UPLOAD_URLS_FAILED', { elapsedMs: ms(started), errorName: error?.name || 'Error', errorMessage: error?.message || String(error) });
     res.status(500).json({ error: 'GCS_UPLOAD_URLS_FAILED', message: error.message });
   }
 });
@@ -105,13 +108,23 @@ app.post('/api/gcs-upload-complete', requireUploadCode, async (req, res) => {
       const contentType = String(item?.contentType || 'application/octet-stream');
       const traceId = String(item?.traceId || crypto.randomBytes(8).toString('hex'));
       if (bucketName !== expectedBucket || !objectName.startsWith('inbox/')) {
-        return { originalName, success: false, error: 'INVALID_GCS_OBJECT' };
+        failure('INVALID_GCS_OBJECT', { traceId, bucketName, objectName, originalName, sourcePreserved: true });
+        return { originalName, success: false, error: 'INVALID_GCS_OBJECT', traceId };
       }
       try {
         await enqueuePhotoClassification({ source: 'gcs', bucketName, objectName, originalName, contentType, traceId });
+        timing('CLOUD_TASK_ENQUEUED', { traceId, bucketName, objectName, originalName });
         return { originalName, success: true, queued: true, traceId };
       } catch (error) {
-        console.error('gcs enqueue failed', objectName, error);
+        failure('CLOUD_TASK_ENQUEUE_FAILED', {
+          traceId,
+          bucketName,
+          objectName,
+          originalName,
+          sourcePreserved: true,
+          errorName: error?.name || 'Error',
+          errorMessage: error?.message || String(error)
+        });
         return { originalName, success: false, error: error.message, traceId };
       }
     }));
@@ -120,12 +133,11 @@ app.post('/api/gcs-upload-complete', requireUploadCode, async (req, res) => {
     timing('GCS_COMPLETE_BATCH', { fileCount: items.length, failed, elapsedMs: ms(started) });
     res.status(failed === results.length ? 500 : 200).json({ total: results.length, succeeded: results.length - failed, failed, results });
   } catch (error) {
-    console.error('gcs upload complete failed', error);
+    failure('GCS_UPLOAD_COMPLETE_FAILED', { elapsedMs: ms(started), errorName: error?.name || 'Error', errorMessage: error?.message || String(error) });
     res.status(500).json({ error: 'GCS_UPLOAD_COMPLETE_FAILED', message: error.message });
   }
 });
 
-// Speed-test endpoint kept separately from production inbox.
 app.post('/api/gcs-test-url', requireUploadCode, async (req, res) => {
   try {
     const originalName = String(req.body?.originalName || 'photo');
@@ -133,7 +145,7 @@ app.post('/api/gcs-test-url', requireUploadCode, async (req, res) => {
     const signed = await createSpeedTestUploadUrl({ originalName, contentType });
     res.json({ ok: true, ...signed });
   } catch (error) {
-    console.error('gcs test url failed', error);
+    failure('GCS_TEST_URL_FAILED', { errorName: error?.name || 'Error', errorMessage: error?.message || String(error) });
     res.status(500).json({ error: 'GCS_TEST_URL_FAILED', message: error.message });
   }
 });
@@ -142,31 +154,41 @@ app.post('/api/process-photo', requireTaskCode, async (req, res) => {
   const source = String(req.body?.source || 'gcs');
   const traceId = String(req.body?.traceId || crypto.randomBytes(6).toString('hex'));
   const start = performance.now();
-  timing('CLASSIFICATION_REQUEST_START', { traceId, source });
+  const bucketName = String(req.body?.bucketName || '');
+  const objectName = String(req.body?.objectName || '');
+  const originalName = safeName(String(req.body?.originalName || 'photo'));
+  timing('CLASSIFICATION_REQUEST_START', { traceId, source, bucketName, objectName, originalName });
   try {
     if (source !== 'gcs') return res.status(400).json({ error: 'UNSUPPORTED_SOURCE' });
-    const bucketName = String(req.body?.bucketName || '');
-    const objectName = String(req.body?.objectName || '');
     if (!bucketName || !objectName) return res.status(400).json({ error: 'MISSING_GCS_OBJECT' });
 
     const result = await classifyGcsPhoto({
       bucketName,
       objectName,
-      originalName: String(req.body?.originalName || 'photo'),
+      originalName,
       contentType: String(req.body?.contentType || 'application/octet-stream')
     }, traceId);
 
-    timing('CLASSIFICATION_REQUEST_DONE', { traceId, source, elapsedMs: ms(start), ...result });
+    timing('CLASSIFICATION_REQUEST_DONE', { traceId, source, elapsedMs: ms(start), bucketName, objectName, originalName, ...result });
     res.json({ ok: true, ...result });
   } catch (error) {
-    console.error('classification failed', source, error);
-    timing('CLASSIFICATION_REQUEST_FAILED', { traceId, source, elapsedMs: ms(start), error: error.message });
+    failure('CLASSIFICATION_REQUEST_FAILED', {
+      traceId,
+      source,
+      elapsedMs: ms(start),
+      bucketName,
+      objectName,
+      originalName,
+      sourcePreserved: true,
+      errorName: error?.name || 'Error',
+      errorMessage: error?.message || String(error)
+    });
     res.status(500).json({ error: 'CLASSIFICATION_FAILED', message: error.message });
   }
 });
 
 app.use((err, req, res, next) => {
-  console.error(err);
+  failure('SERVER_ERROR', { method: req.method, path: req.path, errorName: err?.name || 'Error', errorMessage: err?.message || String(err) });
   res.status(500).json({ error: 'SERVER_ERROR', message: err.message });
 });
 
