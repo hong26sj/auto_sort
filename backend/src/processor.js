@@ -42,42 +42,79 @@ async function sha256File(filePath) {
   return crypto.createHash('sha256').update(bytes).digest('hex');
 }
 
+function dateStatus(meta) {
+  return meta.capturedAt ? 'HAS_CAPTURE_DATE' : 'NO_CAPTURE_DATE';
+}
+
 async function analyzeLocalPhoto({ localPath, originalName, traceId }) {
   const exifStart = performance.now();
   const meta = await readPhotoMetadata(localPath);
+  const hasGps = meta.latitude != null && meta.longitude != null;
+  const captureDateStatus = dateStatus(meta);
   timing('EXIF_READ', {
     traceId,
     elapsedMs: ms(exifStart),
-    hasGps: meta.latitude != null && meta.longitude != null,
-    hasDate: Boolean(meta.capturedAt)
+    hasGps,
+    hasDate: Boolean(meta.capturedAt),
+    dateStatus: captureDateStatus
   });
 
   const classifyStart = performance.now();
   const classification = classifySite(meta.latitude, meta.longitude, sitesConfig.sites, sitesConfig.radiusMeters);
   const siteName = classification.classified ? classification.site.name : '미분류';
   const date = dayFolder(meta.capturedAt);
+  const nearestSite = classification.site?.name || null;
+  const roundedDistance = classification.distanceMeters == null ? null : Math.round(classification.distanceMeters);
+
   timing('SITE_CLASSIFY', {
     traceId,
     elapsedMs: ms(classifyStart),
     siteName,
-    distanceMeters: classification.distanceMeters == null ? null : Math.round(classification.distanceMeters)
+    classificationReason: classification.reason,
+    classified: classification.classified,
+    nearestSite,
+    distanceMeters: roundedDistance,
+    radiusMeters: sitesConfig.radiusMeters,
+    dateStatus: captureDateStatus
   });
+
+  if (!classification.classified) {
+    timing('PHOTO_UNCLASSIFIED', {
+      traceId,
+      reason: classification.reason,
+      nearestSite,
+      distanceMeters: roundedDistance,
+      radiusMeters: sitesConfig.radiusMeters,
+      dateStatus: captureDateStatus
+    });
+  }
+  if (captureDateStatus === 'NO_CAPTURE_DATE') {
+    timing('PHOTO_NO_CAPTURE_DATE', {
+      traceId,
+      siteName,
+      classificationReason: classification.reason
+    });
+  }
 
   const imageStart = performance.now();
   const processed = await processImage(localPath, originalName);
   timing('IMAGE_PROCESS', { traceId, elapsedMs: ms(imageStart), processed: processed.processed });
 
-  return { meta, classification, siteName, date, processed };
+  return { meta, classification, siteName, date, processed, captureDateStatus, nearestSite };
 }
 
-function photoMetadata({ originalName, siteName, classification, meta, traceId, sourceSha256 }) {
+function photoMetadata({ originalName, siteName, classification, meta, traceId, sourceSha256, captureDateStatus, nearestSite }) {
   return {
     traceId,
     originalName: originalName.slice(0, 120),
     classifiedSite: siteName.slice(0, 120),
+    classificationStatus: classification.classified ? 'CLASSIFIED' : 'UNCLASSIFIED',
     classificationReason: classification.reason,
+    nearestSite: nearestSite || '',
     distanceMeters: classification.distanceMeters == null ? '' : String(Math.round(classification.distanceMeters)),
+    radiusMeters: String(sitesConfig.radiusMeters),
     capturedAt: meta.capturedAt ? meta.capturedAt.toISOString() : '',
+    dateStatus: captureDateStatus,
     hasGps: String(meta.latitude != null && meta.longitude != null),
     sourceSha256,
     uploadState: 'CLASSIFIED',
@@ -93,6 +130,8 @@ export async function classifyGcsPhoto({ bucketName, objectName, originalName, c
   let siteName = null;
   let date = null;
   let sourceSha256 = null;
+  let classificationReason = null;
+  let captureDateStatus = null;
   const totalStart = performance.now();
   try {
     stage = 'GCS_OBJECT_CHECK';
@@ -122,6 +161,8 @@ export async function classifyGcsPhoto({ bucketName, objectName, originalName, c
     processed = analyzed.processed;
     siteName = analyzed.siteName;
     date = analyzed.date;
+    classificationReason = analyzed.classification.reason;
+    captureDateStatus = analyzed.captureDateStatus;
     const sourcePath = processed.processed ? processed.path : localPath;
     const objectId = crypto.createHash('sha256').update(objectName).digest('hex').slice(0, 8);
     const targetName = finalName(analyzed.meta, processed.filename || cleanName, objectId);
@@ -131,7 +172,9 @@ export async function classifyGcsPhoto({ bucketName, objectName, originalName, c
       classification: analyzed.classification,
       meta: analyzed.meta,
       traceId,
-      sourceSha256
+      sourceSha256,
+      captureDateStatus,
+      nearestSite: analyzed.nearestSite
     });
 
     stage = 'APPS_SCRIPT_DRIVE_UPLOAD';
@@ -152,6 +195,8 @@ export async function classifyGcsPhoto({ bucketName, objectName, originalName, c
       filename: relayResult.filename || targetName,
       siteName,
       date,
+      classificationReason,
+      dateStatus: captureDateStatus,
       bucketName,
       objectName,
       originalName: cleanName
@@ -162,6 +207,8 @@ export async function classifyGcsPhoto({ bucketName, objectName, originalName, c
       transport: 'apps-script',
       duplicate: Boolean(relayResult.duplicate),
       siteName,
+      classificationReason,
+      dateStatus: captureDateStatus,
       originalName: cleanName,
       bucketName,
       objectName
@@ -178,6 +225,8 @@ export async function classifyGcsPhoto({ bucketName, objectName, originalName, c
       elapsedMs: ms(totalStart),
       siteName,
       date,
+      classificationReason,
+      dateStatus: captureDateStatus,
       source: 'GCS',
       duplicate: Boolean(relayResult.duplicate),
       bucketName,
@@ -187,6 +236,8 @@ export async function classifyGcsPhoto({ bucketName, objectName, originalName, c
     return {
       siteName,
       date,
+      classificationReason,
+      dateStatus: captureDateStatus,
       source: 'GCS',
       duplicate: Boolean(relayResult.duplicate),
       filename: relayResult.filename || targetName,
@@ -202,6 +253,8 @@ export async function classifyGcsPhoto({ bucketName, objectName, originalName, c
       originalName: cleanName,
       siteName,
       date,
+      classificationReason,
+      dateStatus: captureDateStatus,
       sourceSha256: sourceSha256 ? sourceSha256.slice(0, 12) : null,
       sourcePreserved: stage !== 'GCS_DELETE',
       errorName: error?.name || 'Error',
