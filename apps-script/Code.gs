@@ -37,6 +37,40 @@ function findExistingFile_(folder, filename) {
   return files.hasNext() ? files.next() : null;
 }
 
+function parseDescription_(description) {
+  if (!description) return null;
+  try {
+    const parsed = JSON.parse(description);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function findDuplicateBySha256_(folder, sourceSha256) {
+  if (!sourceSha256) return null;
+  const files = folder.getFiles();
+  while (files.hasNext()) {
+    const file = files.next();
+    const metadata = parseDescription_(file.getDescription());
+    if (metadata && metadata.sourceSha256 === sourceSha256) return file;
+  }
+  return null;
+}
+
+function duplicateFilename_(folder, filename) {
+  const dot = filename.lastIndexOf('.');
+  const base = dot > 0 ? filename.slice(0, dot) : filename;
+  const ext = dot > 0 ? filename.slice(dot) : '';
+  let candidate = `${base}_중복${ext}`;
+  let index = 2;
+  while (findExistingFile_(folder, candidate)) {
+    candidate = `${base}_중복${index}${ext}`;
+    index += 1;
+  }
+  return candidate;
+}
+
 function doGet() {
   return json_({ ok: true, service: 'auto-sort-drive-relay' });
 }
@@ -56,6 +90,7 @@ function doPost(e) {
     const dateFolder = String(request.dateFolder || '').trim();
     const fileBase64 = String(request.fileBase64 || '');
     const metadata = request.metadata && typeof request.metadata === 'object' ? request.metadata : {};
+    const sourceSha256 = String(metadata.sourceSha256 || '').trim().toLowerCase();
 
     if (!filename || !fileBase64) return json_({ ok: false, error: 'MISSING_FILE' });
     if (!SITE_FOLDER_IDS[siteName]) return json_({ ok: false, error: 'UNKNOWN_SITE' });
@@ -68,29 +103,40 @@ function doPost(e) {
       const siteFolder = DriveApp.getFolderById(SITE_FOLDER_IDS[siteName]);
       const targetFolder = getOrCreateChildFolder_(siteFolder, dateFolder);
 
-      // Cloud Tasks can retry after a transient network failure. The final filename is
-      // deterministic for each GCS object, so checking by name makes the relay idempotent.
+      // Idempotency for Cloud Tasks retry of the exact same request.
       const existing = findExistingFile_(targetFolder, filename);
       if (existing) {
         return json_({
           ok: true,
-          duplicate: true,
+          duplicate: false,
+          retry: true,
           fileId: existing.getId(),
           filename: existing.getName(),
           elapsedMs: Date.now() - started
         });
       }
 
+      const duplicateOf = findDuplicateBySha256_(targetFolder, sourceSha256);
+      const finalFilename = duplicateOf ? duplicateFilename_(targetFolder, filename) : filename;
+      const finalMetadata = Object.assign({}, metadata, {
+        duplicate: Boolean(duplicateOf),
+        duplicateOfFileId: duplicateOf ? duplicateOf.getId() : '',
+        duplicateOfFilename: duplicateOf ? duplicateOf.getName() : ''
+      });
+
       const bytes = Utilities.base64Decode(fileBase64);
-      const blob = Utilities.newBlob(bytes, mimeType, filename);
+      const blob = Utilities.newBlob(bytes, mimeType, finalFilename);
       const file = targetFolder.createFile(blob);
-      if (metadata && Object.keys(metadata).length) {
-        file.setDescription(JSON.stringify(metadata).slice(0, 5000));
+      if (Object.keys(finalMetadata).length) {
+        file.setDescription(JSON.stringify(finalMetadata).slice(0, 5000));
       }
 
       return json_({
         ok: true,
-        duplicate: false,
+        duplicate: Boolean(duplicateOf),
+        retry: false,
+        duplicateOfFileId: duplicateOf ? duplicateOf.getId() : null,
+        duplicateOfFilename: duplicateOf ? duplicateOf.getName() : null,
         fileId: file.getId(),
         filename: file.getName(),
         elapsedMs: Date.now() - started
