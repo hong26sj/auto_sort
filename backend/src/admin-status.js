@@ -1,11 +1,45 @@
 import { google } from 'googleapis';
 
-function startOfTodayKstIso() {
-  const now = new Date();
-  const kstMs = now.getTime() + (9 * 60 * 60 * 1000);
-  const kst = new Date(kstMs);
-  const utcStart = Date.UTC(kst.getUTCFullYear(), kst.getUTCMonth(), kst.getUTCDate()) - (9 * 60 * 60 * 1000);
-  return new Date(utcStart).toISOString();
+const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+
+function todayKstDateString() {
+  const kst = new Date(Date.now() + KST_OFFSET_MS);
+  return [
+    kst.getUTCFullYear(),
+    String(kst.getUTCMonth() + 1).padStart(2, '0'),
+    String(kst.getUTCDate()).padStart(2, '0')
+  ].join('-');
+}
+
+function kstDayRange(dateString) {
+  const value = String(dateString || todayKstDateString()).trim();
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) {
+    const error = new Error('date must use YYYY-MM-DD format.');
+    error.code = 'INVALID_DATE';
+    throw error;
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const utcStartMs = Date.UTC(year, month - 1, day) - KST_OFFSET_MS;
+  const normalized = new Date(utcStartMs + KST_OFFSET_MS);
+  if (
+    normalized.getUTCFullYear() !== year ||
+    normalized.getUTCMonth() !== month - 1 ||
+    normalized.getUTCDate() !== day
+  ) {
+    const error = new Error('date is not a valid calendar date.');
+    error.code = 'INVALID_DATE';
+    throw error;
+  }
+
+  return {
+    date: value,
+    since: new Date(utcStartMs).toISOString(),
+    until: new Date(utcStartMs + 24 * 60 * 60 * 1000).toISOString()
+  };
 }
 
 function parsePayload(entry) {
@@ -29,30 +63,43 @@ function kstTimestamp(timestamp) {
   }).format(date);
 }
 
-export async function getAdminStatus() {
+async function listAllLogEntries({ logging, projectId, filter }) {
+  const entries = [];
+  let pageToken = null;
+
+  do {
+    const response = await logging.entries.list({
+      requestBody: {
+        resourceNames: [`projects/${projectId}`],
+        filter,
+        orderBy: 'timestamp desc',
+        pageSize: 1000,
+        ...(pageToken ? { pageToken } : {})
+      }
+    });
+    entries.push(...(response.data.entries || []));
+    pageToken = response.data.nextPageToken || null;
+  } while (pageToken);
+
+  return entries;
+}
+
+export async function getAdminStatus({ date } = {}) {
   const projectId = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT || 'auto-sort-507309';
   const serviceName = process.env.K_SERVICE || 'site-photo-uploader';
-  const since = startOfTodayKstIso();
+  const range = kstDayRange(date);
 
   const auth = new google.auth.GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-platform'] });
   const logging = google.logging({ version: 'v2', auth });
   const filter = [
     'resource.type="cloud_run_revision"',
     `resource.labels.service_name="${serviceName}"`,
-    `timestamp>="${since}"`,
+    `timestamp>="${range.since}"`,
+    `timestamp<"${range.until}"`,
     '(textPayload:"PHOTO_TIMING" OR textPayload:"PHOTO_FAILURE" OR jsonPayload.type="PHOTO_TIMING" OR jsonPayload.type="PHOTO_FAILURE")'
   ].join(' AND ');
 
-  const response = await logging.entries.list({
-    requestBody: {
-      resourceNames: [`projects/${projectId}`],
-      filter,
-      orderBy: 'timestamp desc',
-      pageSize: 1000
-    }
-  });
-
-  const entries = response.data.entries || [];
+  const entries = await listAllLogEntries({ logging, projectId, filter });
   const parsed = entries
     .map(entry => ({ timestamp: entry.timestamp, payload: parsePayload(entry) }))
     .filter(item => item.payload && (item.payload.type === 'PHOTO_TIMING' || item.payload.type === 'PHOTO_FAILURE'));
@@ -103,8 +150,11 @@ export async function getAdminStatus() {
 
   return {
     ok: true,
-    period: 'TODAY_KST',
-    since,
+    period: 'DAY_KST',
+    selectedDate: range.date,
+    since: range.since,
+    until: range.until,
+    logEntryCount: entries.length,
     generatedAt: new Date().toISOString(),
     generatedAtKst: kstTimestamp(new Date().toISOString()),
     summary: { uploaded, succeeded, failed, unclassified, duplicate, noCaptureDate },
