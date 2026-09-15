@@ -82,12 +82,17 @@ app.get('/api/config', (req, res) => res.json({
 
 app.get('/api/admin/status', requireAdminCode, async (req, res) => {
   const started = performance.now();
+  const date = String(req.query?.date || '').trim() || undefined;
   try {
-    const status = await getAdminStatus();
+    const status = await getAdminStatus({ date });
     res.json(status);
   } catch (error) {
+    if (error?.code === 'INVALID_DATE') {
+      return res.status(400).json({ error: 'INVALID_DATE', message: error.message });
+    }
     failure('ADMIN_STATUS_FAILED', {
       elapsedMs: ms(started),
+      date: date || null,
       errorName: error?.name || 'Error',
       errorMessage: error?.message || String(error)
     });
