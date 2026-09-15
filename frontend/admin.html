@@ -12,7 +12,7 @@
       <div>
         <p class="eyebrow">영산강권역 소규모감시망</p>
         <h1>사진 업로드 관리자</h1>
-        <p class="sub">오늘(KST) 처리 현황을 Cloud Logging 기준으로 집계합니다.</p>
+        <p class="sub">선택한 날짜(KST)의 처리 현황을 Cloud Logging 기준으로 집계합니다.</p>
       </div>
       <div class="actions">
         <button id="changeCodeBtn" class="ghost">관리자 코드 변경</button>
@@ -31,13 +31,24 @@
     </section>
 
     <section id="dashboard" class="hidden">
+      <section class="datebar panel compact-panel">
+        <button id="prevDateBtn" class="ghost" type="button">◀ 이전날</button>
+        <label class="date-picker-wrap">
+          <span>조회일자</span>
+          <input id="datePicker" type="date" />
+        </label>
+        <button id="nextDateBtn" class="ghost" type="button">다음날 ▶</button>
+        <button id="todayBtn" type="button">오늘</button>
+      </section>
+
       <div class="statusline">
+        <span id="selectedDateLabel">조회일: -</span>
         <span id="generatedAt">-</span>
         <span id="lastProcessed">마지막 처리: -</span>
       </div>
 
       <section class="cards">
-        <article><span>오늘 업로드</span><strong id="uploaded">0</strong></article>
+        <article><span>업로드</span><strong id="uploaded">0</strong></article>
         <article><span>처리 성공</span><strong id="succeeded">0</strong></article>
         <article><span>실패</span><strong id="failed">0</strong></article>
         <article><span>미분류</span><strong id="unclassified">0</strong></article>
