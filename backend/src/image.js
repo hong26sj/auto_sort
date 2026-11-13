@@ -10,6 +10,14 @@ export async function processImage(inputPath, originalName) {
 
   if (mode !== 'jpeg') throw new Error(`Unsupported IMAGE_PROCESSING_MODE: ${mode}`);
 
+  // The prebuilt sharp/libvips image used in Cloud Run cannot decode every HEIC/HEIF variant.
+  // EXIF/site classification has already finished before this step, so preserve these files
+  // as-is instead of failing the whole task and repeatedly retrying a permanent codec error.
+  const ext = path.extname(originalName).toLowerCase();
+  if (ext === '.heic' || ext === '.heif') {
+    return { path: inputPath, filename: originalName, mimeType: null, processed: false };
+  }
+
   // B profile: long edge max 2560 px, JPEG quality 80.
   const maxEdge = Number(process.env.IMAGE_MAX_EDGE || 2560);
   const quality = Number(process.env.IMAGE_JPEG_QUALITY || 80);
