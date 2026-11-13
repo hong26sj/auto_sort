@@ -105,29 +105,25 @@ export async function getAdminStatus({ date } = {}) {
     .filter(item => item.payload && (item.payload.type === 'PHOTO_TIMING' || item.payload.type === 'PHOTO_FAILURE'));
 
   let uploaded = 0;
-  let succeeded = 0;
-  let duplicate = 0;
-  let unclassified = 0;
-  let noCaptureDate = 0;
   let lastProcessedAt = null;
-  const siteCounts = {};
   const latestByTrace = new Map();
+  const successByTrace = new Map();
   const errors = [];
 
   for (const item of parsed) {
     const p = item.payload;
+
     if (p.event === 'GCS_COMPLETE_BATCH') uploaded += Number(p.fileCount || 0);
-    if (p.event === 'CLASSIFICATION_TOTAL') {
-      succeeded += 1;
-      if (p.duplicate) duplicate += 1;
-      if (p.siteName) siteCounts[p.siteName] = (siteCounts[p.siteName] || 0) + 1;
+
+    // Cloud Logging is queried newest first. Keep the newest event per trace for
+    // final failure status, and at most one successful completion per trace.
+    if (p.traceId && !latestByTrace.has(p.traceId)) latestByTrace.set(p.traceId, p);
+    if (p.traceId && p.event === 'CLASSIFICATION_TOTAL' && !successByTrace.has(p.traceId)) {
+      successByTrace.set(p.traceId, { timestamp: item.timestamp, payload: p });
       if (!lastProcessedAt) lastProcessedAt = item.timestamp || null;
     }
-    if (p.event === 'PHOTO_UNCLASSIFIED') unclassified += 1;
-    if (p.event === 'PHOTO_NO_CAPTURE_DATE') noCaptureDate += 1;
 
-    if (p.traceId && !latestByTrace.has(p.traceId)) latestByTrace.set(p.traceId, p);
-
+    // Keep recent raw failures for troubleshooting even when a later retry succeeds.
     if (p.type === 'PHOTO_FAILURE' && errors.length < 10) {
       errors.push({
         timestamp: item.timestamp || null,
@@ -143,9 +139,26 @@ export async function getAdminStatus({ date } = {}) {
     }
   }
 
+  // Final summary is trace-based rather than raw-log-count based. A task that emits
+  // PHOTO_UNCLASSIFIED repeatedly during Cloud Tasks retries is counted only once
+  // after it actually reaches CLASSIFICATION_TOTAL.
+  let succeeded = 0;
+  let duplicate = 0;
+  let unclassified = 0;
+  let noCaptureDate = 0;
+  const siteCounts = {};
+
+  for (const { payload: p } of successByTrace.values()) {
+    succeeded += 1;
+    if (p.duplicate) duplicate += 1;
+    if (p.siteName === '미분류') unclassified += 1;
+    if (p.dateStatus === 'NO_CAPTURE_DATE') noCaptureDate += 1;
+    if (p.siteName) siteCounts[p.siteName] = (siteCounts[p.siteName] || 0) + 1;
+  }
+
   let failed = 0;
-  for (const payload of latestByTrace.values()) {
-    if (payload.type === 'PHOTO_FAILURE') failed += 1;
+  for (const [traceId, payload] of latestByTrace.entries()) {
+    if (!successByTrace.has(traceId) && payload.type === 'PHOTO_FAILURE') failed += 1;
   }
 
   return {
